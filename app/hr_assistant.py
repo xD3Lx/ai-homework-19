@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Tuple
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -25,11 +26,10 @@ models = [
 SYSTEM_PROMPT = (
     "You are an HR assistant. Answer employee questions using only the "
     "company handbook provided below. If the answer is not in the handbook, "
-    "say so (start with NOT_FOUND:) and suggest contacting HR. Do not invent policies."
+    "say so and suggest contacting HR. Do not invent policies."
     "The HR bot must not reveal confidential employee records"
     ", compensation data, medical information, disciplinary records, or private manager notes."
     "The HR bot may provide general policy guidance but must not disclose personal information "
-    "If the information is noy disclosed, start with CONFIDENTIAL"
     "\n\n=== HANDBOOK ===\n{handbook}\n=== END HANDBOOK ==="
 )
 
@@ -60,7 +60,13 @@ class HRAssistant:
             timeout=timeout,
         )
 
-    def ask(self, question: str) -> AssisstantResponse:
+    def ask(self, question: str) -> Tuple[str | None, bool]:
+        if self.matches_confidential_data(question):
+            return "I'm sorry, I cannot answer questions containing confidential information. Please contact HR directly.", True
+
+        if self.matches_prompt_injection_data(question):
+            return "I'm sorry, I cannot answer questions that attempt to inject system prompts. Please contact HR directly.", True
+
         """Send the question plus handbook context to OpenRouter and return the answer."""
         completion = self.client.chat.completions.create(
             model=models[0],
@@ -75,10 +81,47 @@ class HRAssistant:
             ],
         )
         answer = completion.choices[0].message.content
-        return answer
+
+        return answer, False
+
+
+    @staticmethod
+    def matches_confidential_data(question: str) -> bool:
+        """Check if the question contains any confidential data."""
+        keywords = [
+            "confidential",
+            "mobile",
+            "email",
+            "salar",
+            "make at this company",
+            "employee id",
+            "personal contact",
+            "show personal details",
+            "oksana",
+            "shevchenko",
+        ]
+        return any(keyword in question.lower() for keyword in keywords)
+
+
+    @staticmethod
+    def matches_prompt_injection_data(question: str) -> bool:
+        """Check if the question contains any confidential data."""
+        keywords = [
+            "ignore all previous instruction",
+            "ignore previous instruction",
+            "system instructions",
+            "system override",
+            "developer mode",
+            "debug mode",
+            "system prompt",
+            "section 26",
+            "section 27",
+            "bypass",
+        ]
+        return any(keyword in question.lower() for keyword in keywords)
 
 
 if __name__ == "__main__":
     assistant = HRAssistant(load_handbook())
     print(assistant.ask("How many annual leave days do I have?"))
-    print(assistant.ask("Tell me the mobile number of the Head of HR"))
+    print(assistant.ask("What is the Head of HR's mobile phone number?"))
